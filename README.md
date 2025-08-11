@@ -1,3 +1,67 @@
+# RVT-Baseline
+
+
+## Installation
+```bash
+cd baselines/RVT-Baseline
+uv venv .rvt-baseline
+source ~/.bashrc
+source .rvt-baseline/bin/activate
+
+export CUDA_HOME=/usr/local/cuda-11.8
+# uv pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu118
+# uv pip install -e '.[xformers]' 
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+uv pip install -U xformers --index-url https://download.pytorch.org/whl/cu118
+
+uv pip install setuptools==69.0.3
+uv pip install wheel
+uv pip install -r rvt/libs/PyRep/requirements.txt
+uv pip install -e rvt/libs/PyRep --no-build-isolation
+uv pip install -r rvt/libs/RLBench/requirements.txt
+uv pip install -e rvt/libs/RLBench
+uv pip install -e rvt/libs/YARR --no-build-isolation
+uv pip install -e rvt/libs/peract_colab --no-build-isolation
+uv pip install -e rvt/libs/point-renderer --no-build-isolation
+uv pip install -e .
+
+cd ../../third_party/robot-colosseum
+uv pip install -r requirements.txt
+uv pip install -e .
+
+uv pip install hydra-core==1.3.0 pillow natsort pyquaternion html-testRunner typed-argument-parser scipy bitsandbytes wandb opencv-python-headless tensorboard yacs pyrender trimesh einops ftfy packaging pandas transformers transforms3d matplotlib==3.10.3 sentencepiece tiktoken blobfile websockets msgpack accelerate ipykernel blosc open3d plotly openai jinja2
+
+uv pip install git+https://github.com/openai/CLIP.git
+cd ../../baselines/RVT-Baseline
+```
+
+## Training
+```bash
+cd baselines/RVT-Baseline
+source .rvt-baseline/bin/activate
+export PYTHONPATH=$PYTHONPATH:$PWD:$PWD/libs/PyRep:$PWD/libs/RLBench:$PWD/libs/point-renderer:$PWD/libs/peract_colab:$PWD/libs/YARR:$PWD/libs/peract:$PWD/third_party/RVT:/data1/cyt/HiMan_VL/third_party/robot-colosseum
+cd rvt
+
+CUDA_VISIBLE_DEVICES=7 uv run train.py \
+--exp_cfg_path configs/rvt2.yaml \
+--mvt_cfg_path mvt/configs/rvt2.yaml \
+--device 0  \
+--log-dir /data1/cyt/HiMan_data/train_logs_baseline_rvt \
+--replay_dir /data1/cyt/HiMan_data/replay/replay_train_baseline_rvt \
+--data_dir /data1/cyt/HiMan_data
+
+```
+
+## Evaluation
+
+```bash
+bash eval_atomic.sh \
+  --epoch last \
+  --model_folder /data1/cyt/HiMan_data/train_logs_baseline_rvt/rvt2 \
+  --device 6
+```
+---
+
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/rvt-2-learning-precise-manipulation-from-few/robot-manipulation-on-rlbench)](https://paperswithcode.com/sota/robot-manipulation-on-rlbench?p=rvt-2-learning-precise-manipulation-from-few)
 
 [***RVT-2: Learning Precise Manipulation from Few Examples***](https://robotic-view-transformer-2.github.io/) <br/>

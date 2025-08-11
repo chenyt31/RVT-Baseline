@@ -39,7 +39,7 @@ from rvt.utils.peract_utils import (
     CAMERAS,
     SCENE_BOUNDS,
     IMAGE_SIZE,
-    DATA_FOLDER,
+    # DATA_FOLDER,
 )
 
 
@@ -168,14 +168,12 @@ def experiment(rank, cmd_args, devices, port):
 
     # Things to change
     BATCH_SIZE_TRAIN = exp_cfg.bs
-    NUM_TRAIN = 100
+    # NUM_TRAIN = 100
     # to match peract, iterations per epoch
     TRAINING_ITERATIONS = int(exp_cfg.train_iter // (exp_cfg.bs * len(devices)))
     EPOCHS = exp_cfg.epochs
-    TRAIN_REPLAY_STORAGE_DIR = "replay/replay_train"
-    TEST_REPLAY_STORAGE_DIR = "replay/replay_val"
     log_dir = get_logdir(cmd_args, exp_cfg)
-    tasks = get_tasks(exp_cfg)
+    tasks = os.listdir(os.path.join(cmd_args.data_dir, "train"))
     print("Training on {} tasks: {}".format(len(tasks), tasks))
 
     t_start = time.time()
@@ -183,10 +181,10 @@ def experiment(rank, cmd_args, devices, port):
         tasks,
         BATCH_SIZE_TRAIN,
         None,
-        TRAIN_REPLAY_STORAGE_DIR,
+        cmd_args.replay_dir,
         None,
-        DATA_FOLDER,
-        NUM_TRAIN,
+        cmd_args.data_dir,
+        cmd_args.num_train,
         None,
         cmd_args.refresh_replay,
         device,
@@ -295,6 +293,10 @@ if __name__ == "__main__":
 
     parser.add_argument("--mvt_cfg_opts", type=str, default="")
     parser.add_argument("--exp_cfg_opts", type=str, default="")
+
+    parser.add_argument("--replay_dir", type=str, default="/data1/cyt/HiMan_data/replay/replay_train_with_goal_lang_t5")
+    parser.add_argument("--data_dir", type=str, default="/data1/cyt/HiMan_data")
+    parser.add_argument("--num_train", type=int, default=100)
 
     parser.add_argument("--log-dir", type=str, default="runs")
     parser.add_argument("--with-eval", action="store_true", default=False)

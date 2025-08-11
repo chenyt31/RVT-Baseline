@@ -2,6 +2,7 @@
 #
 # Licensed under the NVIDIA Source Code License [see LICENSE for details].
 
+from datetime import datetime
 import os
 import yaml
 import csv
@@ -12,6 +13,7 @@ import shutil
 import numpy as np
 
 from omegaconf import OmegaConf
+OmegaConf.register_new_resolver("eval", eval)
 from multiprocessing import Value
 from tensorflow.python.summary.summary_iterator import summary_iterator
 from copy import deepcopy
@@ -34,7 +36,7 @@ import rvt.config as default_exp_cfg
 
 from rvt.mvt.mvt import MVT
 from rvt.libs.peract.helpers import utils
-from rvt.utils.custom_rlbench_env import (
+from rvt.utils.custom_rlbench_env_colosseum import (
     CustomMultiTaskRLBenchEnv2 as CustomMultiTaskRLBenchEnv,
 )
 from rvt.utils.peract_utils import (
@@ -52,6 +54,8 @@ from rvt.utils.rvt_utils import (
     RLBENCH_TASKS,
 )
 from rvt.utils.rvt_utils import load_agent as load_agent_state
+from colosseum.rlbench.utils import name_to_class
+from colosseum import TASKS_PY_FOLDER, ATOMIC_TASKS_PY_FOLDER, COMPOSITIONAL_TASKS_PY_FOLDER
 
 
 def load_agent(
@@ -93,46 +97,6 @@ def load_agent(
             VOXEL_SIZES = [100]  # 100x100x100 voxels
             NUM_LATENTS = 512  # PerceiverIO latents
             BATCH_SIZE_TRAIN = 1
-            perceiver_encoder = PerceiverIO(
-                depth=6,
-                iterations=1,
-                voxel_size=VOXEL_SIZES[0],
-                initial_dim=3 + 3 + 1 + 3,
-                low_dim_size=4,
-                layer=0,
-                num_rotation_classes=72,
-                num_grip_classes=2,
-                num_collision_classes=2,
-                num_latents=NUM_LATENTS,
-                latent_dim=512,
-                cross_heads=1,
-                latent_heads=8,
-                cross_dim_head=64,
-                latent_dim_head=64,
-                weight_tie_layers=False,
-                activation="lrelu",
-                input_dropout=0.1,
-                attn_dropout=0.1,
-                decoder_dropout=0.0,
-                voxel_patch_size=5,
-                voxel_patch_stride=5,
-                final_dim=64,
-            )
-
-            # initialize PerceiverActor
-            agent = PerceiverActorAgent(
-                coordinate_bounds=SCENE_BOUNDS,
-                perceiver_encoder=perceiver_encoder,
-                camera_names=CAMERAS,
-                batch_size=BATCH_SIZE_TRAIN,
-                voxel_size=VOXEL_SIZES[0],
-                voxel_feature_size=3,
-                num_rotation_classes=72,
-                rotation_resolution=5,
-                image_resolution=[IMAGE_SIZE, IMAGE_SIZE],
-                transform_augmentation=False,
-                **exp_cfg.peract,
-            )
         elif exp_cfg.agent == "our":
             mvt_cfg = default_mvt_cfg.get_cfg_defaults()
             if mvt_cfg_path != None:
@@ -225,15 +189,30 @@ def eval(
     ]
 
     task_classes = []
-    if tasks[0] == "all":
-        tasks = RLBENCH_TASKS
-        if verbose:
-            print(f"evaluate on {len(tasks)} tasks: ", tasks)
-
+    # if args.colosseum:
+    task_class_variation_idx = []
+    task_class_base = []
     for task in tasks:
-        if task not in task_files:
-            raise ValueError("Task %s not recognised!." % task)
-        task_classes.append(task_file_to_task_class(task))
+        task_class_base.append('_'.join(task.split('_')[:-1]))
+        # if task_class_base[-1] not in task_files:
+        #     raise ValueError('Task %s not recognised!.' % task)
+        if args.tasks_type == 'atomic':
+            task_class = name_to_class(task_class_base[-1], ATOMIC_TASKS_PY_FOLDER)
+        elif args.tasks_type == 'compositional':
+            task_class = name_to_class(task_class_base[-1], COMPOSITIONAL_TASKS_PY_FOLDER)
+        else:
+            task_class = name_to_class(task_class_base[-1], TASKS_PY_FOLDER) # task_file_to_task_class(task_class_base)
+        task_class_variation_idx.append(int(task.split('_')[-1]))
+        task_classes.append(task_class)
+    # else:
+    #     task_class_base = []
+    #     task_class_variation_idx = []
+    #     for task in tasks:
+    #         if task not in task_files:
+    #             raise ValueError("Task %s not recognised!." % task)
+    #         task_class_base.append(task)
+    #         task_classes.append(task_file_to_task_class(task))
+    #         task_class_variation_idx.append(0)
 
     eval_env = CustomMultiTaskRLBenchEnv(
         task_classes=task_classes,
@@ -246,6 +225,8 @@ def eval(
         include_lang_goal_in_obs=True,
         time_in_state=True,
         record_every_n=1 if save_video else -1,
+        base_cfg_name=task_class_base,
+        task_class_variation_idx=task_class_variation_idx,
     )
 
     eval_env.eval = True
@@ -267,16 +248,24 @@ def eval(
     rollout_generator = RolloutGenerator(device)
     stats_accumulator = SimpleAccumulator(eval_video_fps=30)
 
-    eval_env.launch()
+    eval_env.launch(args.tasks_type)
 
     current_task_id = -1
 
     num_tasks = len(tasks)
     step_signal = Value("i", -1)
+    # Define log file path
+    log_file_path = "eval_log.txt"
+    log_file_path = os.path.join(log_dir, log_file_path)
+    with open(log_file_path, "a") as log_file:
+        log_file.write("\n" + "="*50 + "\n")
+        log_file.write(f"Log Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
     scores = []
     for task_id in range(num_tasks):
+        stats_accumulator = SimpleAccumulator(eval_video_fps=30)
         task_rewards = []
+        language_goals=[]
         for ep in range(start_episode, start_episode + eval_episodes):
             episode_rollout = []
             generator = rollout_generator.generator(
@@ -297,7 +286,18 @@ def eval(
                 continue
             except Exception as e:
                 eval_env.shutdown()
-                raise e
+                print(e)
+                # writer csv first
+                with open(os.path.join(log_dir, csv_file), "a") as csv_fp:
+                    fieldnames = ["task", "success rate", "length", "total_transitions"]
+                    csv_writer = csv.DictWriter(csv_fp, fieldnames=fieldnames)
+                    task_name = tasks[task_id]
+                    csv_results = {"task": task_name}
+                    csv_results["success rate"] = False
+                    csv_results["length"] = ""
+                    csv_results["total_transitions"] = ""
+                    csv_writer.writerow(csv_results)
+                continue
 
             for transition in episode_rollout:
                 stats_accumulator.step(transition, True)
@@ -308,14 +308,21 @@ def eval(
             reward = episode_rollout[-1].reward
             task_rewards.append(reward)
             lang_goal = eval_env._lang_goal
+            language_goals.append(lang_goal)
             if verbose:
                 print(
                     f"Evaluating {task_name} | Episode {ep} | Score: {reward} | Episode Length: {len(episode_rollout)} | Lang Goal: {lang_goal}"
                 )
+                log_entry = (
+                    f"Task: {task_name}, Episode: {ep}, Score: {reward}, "
+                    f"Episode Length: {len(episode_rollout)}, Lang Goal: {lang_goal}\n"
+                )
+                with open(log_file_path, "a") as log_file:  # Appending to the log file
+                    log_file.write(log_entry)
 
         # report summaries
         summaries = []
-        summaries.extend(stats_accumulator.pop())
+        summaries.extend(stats_accumulator._eval_acc._summaries)
         task_name = tasks[task_id]
         if logging:
             # writer csv first
@@ -332,6 +339,8 @@ def eval(
                         csv_results["total_transitions"] = s.value
                     if "eval" in s.name:
                         s.name = "%s/%s" % (s.name, task_name)
+                    if s.name == 'errors':
+                        csv_results["success rate"] = True if 'True' in s.value else False
                 csv_writer.writerow(csv_results)
         else:
             for s in summaries:
@@ -339,9 +348,15 @@ def eval(
                     s.name = "%s/%s" % (s.name, task_name)
 
         if len(summaries) > 0:
-            task_score = [
-                s.value for s in summaries if f"eval_envs/return/{task_name}" in s.name
-            ][0]
+            try:
+                task_score = [
+                    s.value for s in summaries if f"eval_envs/return/{task_name}" in s.name
+                ][0]
+            except:
+                try:
+                    task_score = 100.0 if csv_results["success rate"] else 0.0
+                except:
+                    task_score = "unknown"
         else:
             task_score = "unknown"
 
@@ -350,48 +365,65 @@ def eval(
         scores.append(task_score)
 
         if save_video:
-            video_image_folder = "./tmp"
+            video_image_folder = f"./tmp/{task_name}"
+            palette_image_folder = f"./tmp/palette_folder_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            palette_image_path=os.path.join(palette_image_folder,"palette.png")
+            num_succ_video = 25
+            num_fail_video = 25
             record_fps = 25
             record_folder = os.path.join(log_dir, "videos")
             os.makedirs(record_folder, exist_ok=True)
             video_success_cnt = 0
             video_fail_cnt = 0
             video_cnt = 0
-            for summary in summaries:
+            for k, summary in enumerate(summaries):
                 if isinstance(summary, VideoSummary):
+                    try:
+                        lang_goal = language_goals.pop(0)
+                    except:
+                        lang_goal = "None"
+                    lang_goal=lang_goal.replace(" ", "_").replace("(", "").replace(")", "")
                     video = deepcopy(summary.value)
                     video = np.transpose(video, (0, 2, 3, 1))
                     video = video[:, :, :, ::-1]
-                    if task_rewards[video_cnt] > 99:
-                        video_path = os.path.join(
-                            record_folder,
-                            f"{task_name}_success_{video_success_cnt}.mp4",
+                    if len(task_rewards) > video_cnt and ((task_rewards[video_cnt] > 99 and video_success_cnt < num_succ_video) or \
+                        (not task_rewards[video_cnt] > 99 and video_fail_cnt < num_fail_video)):
+                        if task_rewards[video_cnt] > 99:
+                            video_path = os.path.join(
+                                record_folder,
+                                f"{task_name}_{lang_goal}_success_{video_success_cnt}.mp4",
+                            )
+                            video_success_cnt += 1
+                        else:
+                            video_path = os.path.join(
+                                record_folder, f"{task_name}_{lang_goal}_fail_{video_fail_cnt}.mp4"
+                            )
+                            video_fail_cnt += 1
+                        video_cnt += 1
+                        os.makedirs(video_image_folder, exist_ok=True)
+                        os.makedirs(palette_image_folder, exist_ok=True)
+                        for idx in range(len(video) - 10):
+                            cv2.imwrite(
+                                os.path.join(video_image_folder, f"{idx}.png"), video[idx]
+                            )
+                        images_path = os.path.join(video_image_folder, r"%d.png")
+                        os.system(
+                            f"bash -c 'ffmpeg -y -i \"{images_path}\" -vf palettegen \"{palette_image_path}\" -hide_banner -loglevel error'"
                         )
-                        video_success_cnt += 1
-                    else:
-                        video_path = os.path.join(
-                            record_folder, f"{task_name}_fail_{video_fail_cnt}.mp4"
+                        
+                        os.system(
+                            f"bash -c 'ffmpeg -y -framerate {record_fps} -i \"{images_path}\" -i \"{palette_image_path}\" -lavfi paletteuse \"{video_path}\" -hide_banner -loglevel error'"
                         )
-                        video_fail_cnt += 1
-                    video_cnt += 1
-                    os.makedirs(video_image_folder, exist_ok=True)
-                    for idx in range(len(video) - 10):
-                        cv2.imwrite(
-                            os.path.join(video_image_folder, f"{idx}.png"), video[idx]
-                        )
-                    images_path = os.path.join(video_image_folder, r"%d.png")
-                    os.system(
-                        "ffmpeg -i {} -vf palettegen palette.png -hide_banner -loglevel error".format(
-                            images_path
-                        )
-                    )
-                    os.system(
-                        "ffmpeg -framerate {} -i {} -i palette.png -lavfi paletteuse {} -hide_banner -loglevel error".format(
-                            record_fps, images_path, video_path
-                        )
-                    )
-                    os.remove("palette.png")
-                    shutil.rmtree(video_image_folder)
+
+                        print(f'video saved - {task_name}')
+                        try:
+                            os.remove(palette_image_path)
+                        except:
+                            pass
+                        try:
+                            shutil.rmtree(video_image_folder)
+                        except:
+                            pass
 
     eval_env.shutdown()
 
