@@ -271,7 +271,7 @@ class CustomMultiTaskRLBenchEnv(MultiTaskRLBenchEnv):
 
         if self._time_in_state:
             time = (1. - ((self._i if t is None else t) / float(
-                self._episode_length - 1))) * 2. - 1.
+                15 - 1))) * 2. - 1.
             obs_dict['low_dim_state'] = np.concatenate(
                 [obs_dict['low_dim_state'], [time]]).astype(np.float32)
 

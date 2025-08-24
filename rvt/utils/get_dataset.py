@@ -37,6 +37,7 @@ def get_dataset(
     num_workers,
     only_train,
     sample_distribution_mode="transition_uniform",
+    train_mode="vanilla"
 ):
 
     train_replay_buffer = create_replay(
@@ -106,6 +107,7 @@ def get_dataset(
             variation_desriptions_pkl=VARIATION_DESCRIPTIONS_PKL,
             clip_model=clip_model,
             device=device,
+            train_mode=train_mode
         )
 
         if not only_train:

@@ -225,7 +225,8 @@ def get_eval_parser():
     parser.add_argument("--save-video", action="store_true")
     parser.add_argument("--skip", action="store_true")
 
-    parser.add_argument("--tasks_type", type=str, default="")
+    parser.add_argument("--tasks_type", type=str, default="atomic")
+    parser.add_argument("--eval_mode", type=str, default="vanilla")
 
     return parser
 

@@ -168,13 +168,10 @@ class MultiTaskRLBenchEnv(MultiTaskEnv):
         extracted_obs = _extract_obs(obs, self._channels_last, self._observation_config)
         if self._include_lang_goal_in_obs:
             extracted_obs['lang_goal_tokens'] = tokenize([self._lang_goal])[0].numpy()
-            # extracted_obs['lang_goal_tokens_bbox'] = tokenize(['Focus on red bounding box, ' + self._lang_goal])[0].numpy()
-            # try:
-            #     extracted_obs['oracle_lang_goal_tokens'] = tokenize(self.descriptions["oracle_half"][0].split('\n')).numpy()
-            #     new_descriptions = ['Focus on red bounding box, ' + desc for desc in self.descriptions["oracle_half"][0].split('\n')]
-            #     extracted_obs['oracle_lang_goal_tokens_bbox'] = tokenize(new_descriptions).numpy()
-            # except:
-            #     pass
+            try:
+                extracted_obs['half_lang_goal_tokens'] = tokenize(self.descriptions["oracle_half"][0].split('\n')).numpy()
+            except:
+                pass
         return extracted_obs
 
     def launch(self, task_type=None):

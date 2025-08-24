@@ -191,6 +191,7 @@ def experiment(rank, cmd_args, devices, port):
         num_workers=exp_cfg.num_workers,
         only_train=True,
         sample_distribution_mode=exp_cfg.sample_distribution_mode,
+        train_mode=cmd_args.train_mode
     )
     train_dataset, _ = get_dataset_func()
     t_end = time.time()
@@ -297,6 +298,7 @@ if __name__ == "__main__":
     parser.add_argument("--replay_dir", type=str, default="/data1/cyt/HiMan_data/replay/replay_train_with_goal_lang_t5")
     parser.add_argument("--data_dir", type=str, default="/data1/cyt/HiMan_data")
     parser.add_argument("--num_train", type=int, default=100)
+    parser.add_argument("--train_mode", type=str, default="vanilla")
 
     parser.add_argument("--log-dir", type=str, default="runs")
     parser.add_argument("--with-eval", action="store_true", default=False)

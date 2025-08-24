@@ -25,7 +25,7 @@ from rlbench.backend import task as rlbench_task
 from rlbench.backend.utils import task_file_to_task_class
 from rlbench.action_modes.gripper_action_modes import Discrete
 from rlbench.action_modes.action_mode import MoveArmThenGripper
-from yarr.utils.rollout_generator import RolloutGenerator
+from rvt.utils.rollout_generator import RolloutGenerator
 from yarr.utils.stat_accumulator import SimpleAccumulator
 from yarr.utils.log_writer import LogWriter
 from yarr.agents.agent import VideoSummary
@@ -170,6 +170,8 @@ def eval(
     log_dir=None,
     verbose=True,
     save_video=False,
+    eval_mode="vanilla",
+    log_name="tmp"
 ):
     agent.eval()
     if isinstance(agent, rvt_agent.RVTAgent):
@@ -240,7 +242,7 @@ def eval(
         csv_file = "eval_results.csv"
         if not os.path.exists(os.path.join(log_dir, csv_file)):
             with open(os.path.join(log_dir, csv_file), "w") as csv_fp:
-                fieldnames = ["task", "success rate", "length", "total_transitions"]
+                fieldnames = ["task", "success_rate"]
                 csv_writer = csv.DictWriter(csv_fp, fieldnames=fieldnames)
                 csv_writer.writeheader()
 
@@ -278,6 +280,7 @@ def eval(
                 eval_demo_seed=ep,
                 record_enabled=False,
                 replay_ground_truth=replay_ground_truth,
+                eval_mode=eval_mode
             )
             try:
                 for replay_transition in generator:
@@ -287,16 +290,6 @@ def eval(
             except Exception as e:
                 eval_env.shutdown()
                 print(e)
-                # writer csv first
-                with open(os.path.join(log_dir, csv_file), "a") as csv_fp:
-                    fieldnames = ["task", "success rate", "length", "total_transitions"]
-                    csv_writer = csv.DictWriter(csv_fp, fieldnames=fieldnames)
-                    task_name = tasks[task_id]
-                    csv_results = {"task": task_name}
-                    csv_results["success rate"] = False
-                    csv_results["length"] = ""
-                    csv_results["total_transitions"] = ""
-                    csv_writer.writerow(csv_results)
                 continue
 
             for transition in episode_rollout:
@@ -327,20 +320,23 @@ def eval(
         if logging:
             # writer csv first
             with open(os.path.join(log_dir, csv_file), "a") as csv_fp:
-                fieldnames = ["task", "success rate", "length", "total_transitions"]
+                fieldnames = ["task", "success_rate"]
                 csv_writer = csv.DictWriter(csv_fp, fieldnames=fieldnames)
                 csv_results = {"task": task_name}
+                total_success = 0
                 for s in summaries:
                     if s.name == "eval_envs/return":
-                        csv_results["success rate"] = s.value
-                    elif s.name == "eval_envs/length":
-                        csv_results["length"] = s.value
-                    elif s.name == "eval_envs/total_transitions":
-                        csv_results["total_transitions"] = s.value
+                        if 'True' in s.value:
+                            total_success += 1
                     if "eval" in s.name:
                         s.name = "%s/%s" % (s.name, task_name)
                     if s.name == 'errors':
-                        csv_results["success rate"] = True if 'True' in s.value else False
+                        if 'True' in s.value:
+                            total_success += 1
+                try:
+                    csv_results["success_rate"] = total_success / eval_episodes
+                except:
+                    csv_results["success_rate"] = "error"
                 csv_writer.writerow(csv_results)
         else:
             for s in summaries:
@@ -365,8 +361,8 @@ def eval(
         scores.append(task_score)
 
         if save_video:
-            video_image_folder = f"./tmp/{task_name}"
-            palette_image_folder = f"./tmp/palette_folder_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            video_image_folder = f"./tmp/{log_name}/{task_name}"
+            palette_image_folder = f"./tmp/{log_name}/palette_folder_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             palette_image_path=os.path.join(palette_image_folder,"palette.png")
             num_succ_video = 25
             num_fail_video = 25
@@ -553,6 +549,8 @@ def _eval(args):
             log_dir=agent_eval_log_dir,
             verbose=True,
             save_video=args.save_video,
+            eval_mode=args.eval_mode,
+            log_name=args.log_name
         )
         print(f"model {model_path}, scores {scores}")
         task_scores = {}

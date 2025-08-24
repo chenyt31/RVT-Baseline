@@ -27,6 +27,55 @@ from rvt.utils.peract_utils import LOW_DIM_SIZE, IMAGE_SIZE, CAMERAS
 from rvt.libs.peract.helpers.demo_loading_utils import keypoint_discovery
 from rvt.libs.peract.helpers.utils import extract_obs
 
+import bisect
+def find_first_greater_index(episode_keypoints, sample_frame):
+    index = bisect.bisect_right(episode_keypoints, sample_frame)
+    return index if index < len(episode_keypoints) else -1
+
+def get_current_timestep(episode_keypoints, subgoal_keypoints, sample_frame):
+    next_keypoint_idx = find_first_greater_index(episode_keypoints, sample_frame)
+    next_subgoal_keypoints_idx = find_first_greater_index(subgoal_keypoints, sample_frame)
+
+    if next_subgoal_keypoints_idx == 0:
+        start_idx = 0
+    elif next_subgoal_keypoints_idx == 1:
+        start_idx = episode_keypoints.index(subgoal_keypoints[0]) + 1
+
+    return next_keypoint_idx - start_idx
+
+def _is_stopped_deco(demo, i, obs, stopped_buffer, prev_gripper_open, delta=0.1):
+    next_is_not_final = i == (len(demo) - 2)
+    gripper_state_no_change = (
+            i < (len(demo) - 2) and
+            (obs.gripper_open == demo[i + 1].gripper_open and
+             obs.gripper_open == demo[i - 1].gripper_open and
+             demo[i - 2].gripper_open == demo[i - 1].gripper_open and
+             obs.gripper_open == prev_gripper_open))
+    small_delta = np.allclose(obs.joint_velocities, 0, atol=delta)
+    stopped = (stopped_buffer <= 0 and small_delta and
+               (not next_is_not_final) and gripper_state_no_change)
+    return stopped
+
+def subgoal_discovery(demo: Demo,
+                            stopping_delta=0.1) -> List[int]:
+    sub_goal_keypoints = []
+    path_goal_keypoints = []
+    prev_gripper_open = demo[0].gripper_open
+    stopped_buffer = 0
+    for i, obs in enumerate(demo):
+        stopped = _is_stopped_deco(demo, i, obs, stopped_buffer, prev_gripper_open, stopping_delta)
+        stopped_buffer = 4 if stopped else stopped_buffer - 1
+        last = i == (len(demo) - 1)
+        if i > 1 and (obs.gripper_open != prev_gripper_open or last):
+            sub_goal_keypoints.append(i)
+        prev_gripper_open = obs.gripper_open
+            
+        if i > 1 and not last and stopped:
+            path_goal_keypoints.append(i)
+    if len(sub_goal_keypoints) > 1 and (sub_goal_keypoints[-1] - 1) == \
+            sub_goal_keypoints[-2]:
+        sub_goal_keypoints.pop(-2)
+    return sub_goal_keypoints, path_goal_keypoints
 
 def create_replay(
     batch_size: int,
@@ -223,6 +272,7 @@ def _add_keypoints_to_replay(
     inital_obs: Observation,
     demo: Demo,
     episode_keypoints: List[int],
+    subgoal_keypoints: List[int],
     cameras: List[str],
     rlbench_scene_bounds: List[float],
     voxel_sizes: List[int],
@@ -232,6 +282,7 @@ def _add_keypoints_to_replay(
     description: str = "",
     clip_model=None,
     device="cpu",
+    train_mode="vanilla"
 ):
     prev_action = None
     obs = inital_obs
@@ -259,12 +310,15 @@ def _add_keypoints_to_replay(
         terminal = k == len(episode_keypoints) - 1
         reward = float(terminal) * 1.0 if terminal else 0
 
+        if train_mode == "half":
+            timestep = get_current_timestep(episode_keypoints, subgoal_keypoints, sample_frame)
+
         obs_dict = extract_obs(
             obs,
             CAMERAS,
-            t=k - next_keypoint_idx,
-            prev_action=prev_action,
-            episode_length=25,
+            t=timestep,
+            # prev_action=prev_action,
+            episode_length=15,
         )
         tokens = clip.tokenize([description]).numpy()
         token_tensor = torch.from_numpy(tokens).to(device)
@@ -308,20 +362,20 @@ def _add_keypoints_to_replay(
         )
         obs = obs_tp1
         sample_frame = keypoint
-
+        break
     # final step
-    obs_dict_tp1 = extract_obs(
-        obs_tp1,
-        CAMERAS,
-        t=k + 1 - next_keypoint_idx,
-        prev_action=prev_action,
-        episode_length=25,
-    )
-    obs_dict_tp1["lang_goal_embs"] = lang_embs[0].float().detach().cpu().numpy()
+    # obs_dict_tp1 = extract_obs(
+    #     obs_tp1,
+    #     CAMERAS,
+    #     t=k + 1 - next_keypoint_idx,
+    #     prev_action=prev_action,
+    #     episode_length=25,
+    # )
+    # obs_dict_tp1["lang_goal_embs"] = lang_embs[0].float().detach().cpu().numpy()
 
-    obs_dict_tp1.pop("wrist_world_to_cam", None)
-    obs_dict_tp1.update(final_obs)
-    replay.add_final(task, task_replay_storage_folder, **obs_dict_tp1)
+    # obs_dict_tp1.pop("wrist_world_to_cam", None)
+    # obs_dict_tp1.update(final_obs)
+    # replay.add_final(task, task_replay_storage_folder, **obs_dict_tp1)
 
 
 def fill_replay(
@@ -342,6 +396,7 @@ def fill_replay(
     variation_desriptions_pkl: str,
     clip_model=None,
     device="cpu",
+    train_mode="vanilla"
 ):
 
     disk_exist = False
@@ -376,13 +431,27 @@ def fill_replay(
             )
             with open(varation_descs_pkl_file, "rb") as f:
                 descs = pickle.load(f)
-                try:
+                if train_mode == "vanilla":
                     descs = descs['vanilla']
-                except:
-                    pass
+                    desc = descs[0]
+                elif train_mode == "half":
+                    descs = descs['oracle_half'][0]
+                else:
+                    desc = descs[0]
+
+            # instr index
+            instr_index_list = []
+            index = 0
+            prev_gripper_open = demo[0].gripper_open
+            for i, obs in enumerate(demo):
+                if obs.gripper_open != prev_gripper_open:
+                    index += 1
+                instr_index_list.append(index)
+                prev_gripper_open = obs.gripper_open
 
             # extract keypoints
             episode_keypoints = keypoint_discovery(demo)
+            subgoal_keypoints, _ = subgoal_discovery(demo)
             next_keypoint_idx = 0
             for i in range(len(demo) - 1):
                 if not demo_augmentation and i > 0:
@@ -391,7 +460,9 @@ def fill_replay(
                     continue
 
                 obs = demo[i]
-                desc = descs[0]
+                if train_mode == "half":
+                    desc = descs[instr_index_list[i] % len(descs)]
+                
                 # if our starting point is past one of the keypoints, then remove it
                 while (
                     next_keypoint_idx < len(episode_keypoints)
@@ -409,6 +480,7 @@ def fill_replay(
                     obs,
                     demo,
                     episode_keypoints,
+                    subgoal_keypoints,
                     cameras,
                     rlbench_scene_bounds,
                     voxel_sizes,
@@ -418,6 +490,7 @@ def fill_replay(
                     description=desc,
                     clip_model=clip_model,
                     device=device,
+                    train_mode=train_mode
                 )
 
         # save TERMINAL info in replay_info.npy

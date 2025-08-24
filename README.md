@@ -39,26 +39,32 @@ cd ../../baselines/RVT-Baseline
 ```bash
 cd baselines/RVT-Baseline
 source .rvt-baseline/bin/activate
-export PYTHONPATH=$PYTHONPATH:$PWD:$PWD/libs/PyRep:$PWD/libs/RLBench:$PWD/libs/point-renderer:$PWD/libs/peract_colab:$PWD/libs/YARR:$PWD/libs/peract:$PWD/third_party/RVT:/data1/cyt/HiMan_VL/third_party/robot-colosseum
+export PYTHONPATH=$PYTHONPATH:$PWD:$PWD/libs/PyRep:$PWD/libs/RLBench:$PWD/libs/point-renderer:$PWD/libs/peract_colab:$PWD/libs/YARR:$PWD/libs/peract:/data1/cyt/HiMan_VL/third_party/robot-colosseum
 cd rvt
 
-CUDA_VISIBLE_DEVICES=7 uv run train.py \
+CUDA_VISIBLE_DEVICES=6 uv run train.py \
 --exp_cfg_path configs/rvt2.yaml \
 --mvt_cfg_path mvt/configs/rvt2.yaml \
 --device 0  \
---log-dir /data1/cyt/HiMan_data/train_logs_baseline_rvt \
---replay_dir /data1/cyt/HiMan_data/replay/replay_train_baseline_rvt \
---data_dir /data1/cyt/HiMan_data
+--log-dir /data1/cyt/HiMan_data/train_logs_baseline_rvt_half \
+--replay_dir /data1/cyt/HiMan_data/replay/replay_train_baseline_rvt_half \
+--data_dir /data1/cyt/HiMan_data \
+--train_mode "half"
 
 ```
 
 ## Evaluation
 
 ```bash
-bash eval_atomic.sh \
+bash eval.sh \
   --epoch last \
-  --model_folder /data1/cyt/HiMan_data/train_logs_baseline_rvt/rvt2 \
-  --device 6
+  --model_folder /data1/cyt/HiMan_data/train_logs_baseline_rvt_half/rvt2 \
+  --device 6 \
+  --tasks_type atomic \
+  --eval_mode half \
+  --data_dir /data1/cyt/HiMan_data/train_atomic_L1 \
+  --num_episodes 5 \
+  --log_name "half_debug"
 ```
 ---
 
